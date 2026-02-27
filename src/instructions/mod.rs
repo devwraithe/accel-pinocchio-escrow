@@ -1,17 +1,20 @@
 pub mod make;
-pub mod take;
 pub mod refund;
+pub mod take;
+pub mod wincode;
 
 pub use make::*;
-pub use take::*;
 pub use refund::*;
+pub use take::*;
+
+pub use wincode::make_v2::*;
 
 use pinocchio::error::ProgramError;
 
 pub enum EscrowInstructions {
     Make = 0,
     Take = 1,
-    Refund = 2, // Also known as Cancel
+    Refund = 2, // or Cancel
     MakeV2 = 3,
 }
 

@@ -6,7 +6,7 @@ use pinocchio::{
 
 use crate::state::Escrow;
 
-pub fn process_take_instruction(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
+pub fn process_take_instruction(accounts: &[AccountView]) -> ProgramResult {
     let [taker, maker, mint_a, mint_b, escrow_account, vault, taker_ata_a, taker_ata_b, maker_ata_b, _token_program, _system_program, _associated_token_program @ ..] =
         accounts
     else {

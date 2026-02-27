@@ -3,9 +3,12 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use litesvm::LiteSVM;
-    use litesvm_token::{spl_token::{self}, CreateAssociatedTokenAccount, CreateMint, MintTo};
-    
+    use litesvm::{types::TransactionMetadata, LiteSVM};
+    use litesvm_token::{
+        spl_token::{self},
+        CreateAssociatedTokenAccount, CreateMint, MintTo,
+    };
+
     use solana_instruction::{AccountMeta, Instruction};
     use solana_keypair::Keypair;
     use solana_message::Message;
@@ -14,126 +17,276 @@ mod tests {
     use solana_signer::Signer;
     use solana_transaction::Transaction;
 
-    const PROGRAM_ID: &str = "4ibrEMW5F6hKnkW4jVedswYv6H6VtwPN6ar6dvXDN1nT";
+    // ----- Program constants ----- //
     const TOKEN_PROGRAM_ID: Pubkey = spl_token::ID;
-    const ASSOCIATED_TOKEN_PROGRAM_ID: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
-    
+
     fn program_id() -> Pubkey {
         Pubkey::from(crate::ID)
     }
 
-    fn setup() -> (LiteSVM, Keypair) {
+    fn associated_token_program_id() -> Pubkey {
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+            .parse()
+            .unwrap()
+    }
 
+    fn system_program_id() -> Pubkey {
+        solana_sdk_ids::system_program::ID
+    }
+
+    // ----- Shared test state ----- //
+    pub struct EscrowAccounts {
+        payer: Keypair,
+        maker: Pubkey,
+        vault: Pubkey,
+        escrow: Pubkey,
+        mint_a: Pubkey,
+        mint_b: Pubkey,
+        maker_ata_a: Pubkey,
+        maker_ata_b: Pubkey,
+    }
+
+    // ----- Instruction discriminators ----- //
+    const DISCRIMINATOR_MAKE: u8 = 0;
+    const DISCRIMINATOR_TAKE: u8 = 1;
+
+    // ----- Helpers ----- //
+    fn setup() -> (LiteSVM, Keypair) {
         let mut svm = LiteSVM::new();
         let payer = Keypair::new();
 
-        svm
-            .airdrop(&payer.pubkey(), 10 * LAMPORTS_PER_SOL)
+        svm.airdrop(&payer.pubkey(), 10 * LAMPORTS_PER_SOL)
             .expect("Airdrop failed");
 
-        // Load program SO file
-        println!("The path is!! {}", env!("CARGO_MANIFEST_DIR"));
-        let so_path = PathBuf::from("/Users/andrecorreia/Documents/Solana/pinocchio-escrow-2025/escrow/target/sbf-solana-solana/release/escrow.so");
-    
-        let program_data = std::fs::read(so_path).expect("Failed to read program SO file");
-    
-        svm.add_program(program_id(), &program_data).expect("Failed to add program");
+        let so_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/deploy/escrow.so");
+
+        let program_data = std::fs::read(so_path).expect("failed to read program .so file");
+
+        svm.add_program(program_id(), &program_data)
+            .expect("failed to add program");
 
         (svm, payer)
-        
     }
 
-    #[test]
-    pub fn test_make_instruction() {
+    fn derive_escrow_pda(maker: &Pubkey) -> (Pubkey, u8) {
+        Pubkey::find_program_address(&[b"escrow", maker.as_ref()], &program_id())
+    }
+
+    fn derive_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        spl_associated_token_account::get_associated_token_address(owner, mint)
+    }
+
+    fn make_escrow() -> (LiteSVM, EscrowAccounts, TransactionMetadata) {
         let (mut svm, payer) = setup();
+        let maker = payer.pubkey();
 
-        let program_id = program_id();
-
-        assert_eq!(program_id.to_string(), PROGRAM_ID);
-
+        // --- Mints --- //
         let mint_a = CreateMint::new(&mut svm, &payer)
             .decimals(6)
             .authority(&payer.pubkey())
             .send()
-            .unwrap();
-        println!("Mint A: {}", mint_a);
+            .expect("Failed to create mint_a");
 
         let mint_b = CreateMint::new(&mut svm, &payer)
             .decimals(6)
             .authority(&payer.pubkey())
             .send()
-            .unwrap();
-        println!("Mint B: {}", mint_b);
+            .expect("Failed to create mint_b");
 
-        // Create the maker's associated token account for Mint A
+        // ---  Associated token accounts --- //
         let maker_ata_a = CreateAssociatedTokenAccount::new(&mut svm, &payer, &mint_a)
-            .owner(&payer.pubkey()).send().unwrap();
-        println!("Maker ATA A: {}\n", maker_ata_a);
-
-        // Derive the PDA for the escrow account using the maker's public key and a seed value
-        let escrow = Pubkey::find_program_address(
-            &[b"escrow".as_ref(), payer.pubkey().as_ref()],
-            &PROGRAM_ID.parse().unwrap(),
-        );
-        println!("Escrow PDA: {}\n", escrow.0);
-
-        // Derive the PDA for the vault associated token account using the escrow PDA and Mint A
-        let vault = spl_associated_token_account::get_associated_token_address(
-            &escrow.0,  // owner will be the escrow PDA
-            &mint_a     // mint
-        );
-        println!("Vault PDA: {}\n", vault);
-
-        // Define program IDs for associated token program, token program, and system program
-        let associated_token_program = ASSOCIATED_TOKEN_PROGRAM_ID.parse::<Pubkey>().unwrap();
-        let token_program = TOKEN_PROGRAM_ID;
-        let system_program = solana_sdk_ids::system_program::ID;
-
-        // Mint 1,000 tokens (with 6 decimal places) of Mint A to the maker's associated token account
-        MintTo::new(&mut svm, &payer, &mint_a, &maker_ata_a, 1000000000)
+            .owner(&maker)
             .send()
-            .unwrap();
+            .expect("failed to create maker_ata_a");
 
-        let amount_to_receive: u64 = 100000000; // 100 tokens with 6 decimal places
-        let amount_to_give: u64 = 500000000;    // 500 tokens with 6 decimal places
-        let bump: u8 = escrow.1;
+        let maker_ata_b = CreateAssociatedTokenAccount::new(&mut svm, &payer, &mint_b)
+            .owner(&maker)
+            .send()
+            .expect("failed to create maker_ata_b");
 
-        println!("Bump: {}", bump);
+        // --- PDA derivation ---//
+        let (escrow, bump) = derive_escrow_pda(&maker);
+        let vault = derive_ata(&escrow, &mint_a);
 
-        // Create the "Make" instruction to deposit tokens into the escrow
-        let make_data = [
-            vec![0u8],              // Discriminator for "Make" instruction
+        // --- Token supply --- //
+        let amount_to_give: u64 = 500_000_000; // 500 mint_a tokens (6 decimals)
+        let amount_to_receive: u64 = 100_000_000; // 100 mint_b tokens (6 decimals)
+
+        MintTo::new(&mut svm, &payer, &mint_a, &maker_ata_a, amount_to_give)
+            .send()
+            .expect("failed to mint tokens to maker_ata_a");
+
+        // --- Make instruction --- //
+        let data = [
+            vec![DISCRIMINATOR_MAKE],
             bump.to_le_bytes().to_vec(),
             amount_to_receive.to_le_bytes().to_vec(),
             amount_to_give.to_le_bytes().to_vec(),
-        ].concat();
+        ]
+        .concat();
+
         let make_ix = Instruction {
-            program_id: program_id,
+            program_id: program_id(),
             accounts: vec![
-                AccountMeta::new(payer.pubkey(), true),
+                AccountMeta::new(maker, true),
                 AccountMeta::new(mint_a, false),
                 AccountMeta::new(mint_b, false),
-                AccountMeta::new(escrow.0, false),
+                AccountMeta::new(escrow, false),
                 AccountMeta::new(maker_ata_a, false),
                 AccountMeta::new(vault, false),
-                AccountMeta::new(system_program, false),
-                AccountMeta::new(token_program, false),
-                AccountMeta::new(associated_token_program, false),
+                AccountMeta::new(system_program_id(), false),
+                AccountMeta::new(TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(associated_token_program_id(), false),
             ],
-            data: make_data,
+            data,
         };
 
-        // Create and send the transaction containing the "Make" instruction
-        let message = Message::new(&[make_ix], Some(&payer.pubkey()));
-        let recent_blockhash = svm.latest_blockhash();
+        let tx = {
+            let message = Message::new(&[make_ix], Some(&maker));
+            let blockhash = svm.latest_blockhash();
+            Transaction::new(&[&payer], message, blockhash)
+        };
 
-        let transaction = Transaction::new(&[&payer], message, recent_blockhash);
+        let metadata = svm.send_transaction(tx).expect("make transaction failed");
 
-        // Send the transaction and capture the result
-        let tx = svm.send_transaction(transaction).unwrap();
+        let accounts = EscrowAccounts {
+            payer,
+            maker,
+            vault,
+            escrow,
+            mint_a,
+            mint_b,
+            maker_ata_a,
+            maker_ata_b,
+        };
 
-        // Log transaction details
-        println!("\n\nMake transaction sucessfull");
-        println!("CUs Consumed: {}", tx.compute_units_consumed);
+        (svm, accounts, metadata)
     }
+
+    // ----- Tests ----- //
+    #[test]
+    pub fn test_make() {
+        let (_svm, _accounts, metadata) = make_escrow();
+
+        println!("make: ok — {}\nCUs", metadata.compute_units_consumed);
+
+        // Add assertions to confirm transaction state changes
+    }
+
+    #[test]
+    fn test_take() {
+        let (mut svm, accounts, _) = make_escrow();
+
+        let EscrowAccounts {
+            payer,
+            maker,
+            vault,
+            escrow,
+            mint_a,
+            mint_b,
+            maker_ata_b,
+            ..
+        } = accounts;
+
+        let amount_to_receive: u64 = 100_000_000;
+
+        // --- Taker setup --- //
+        let taker = Keypair::new();
+        svm.airdrop(&taker.pubkey(), 10 * LAMPORTS_PER_SOL)
+            .expect("airdrop to taker failed");
+
+        let taker_ata_a = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_a)
+            .owner(&taker.pubkey())
+            .send()
+            .expect("failed to create taker_ata_a");
+
+        let taker_ata_b = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_b)
+            .owner(&taker.pubkey())
+            .send()
+            .expect("failed to create taker_ata_b");
+
+        // Fund the taker's mint_b account so they can fulfill the maker's ask.
+        MintTo::new(&mut svm, &payer, &mint_b, &taker_ata_b, amount_to_receive)
+            .send()
+            .expect("failed to mint tokens to taker_ata_b");
+
+        // --- Take instruction --- //
+        let take_ix = Instruction {
+            program_id: program_id(),
+            accounts: vec![
+                AccountMeta::new(taker.pubkey(), true),
+                AccountMeta::new(maker, false),
+                AccountMeta::new(mint_a, false),
+                AccountMeta::new(mint_b, false),
+                AccountMeta::new(escrow, false),
+                AccountMeta::new(vault, false),
+                AccountMeta::new(taker_ata_a, false),
+                AccountMeta::new(taker_ata_b, false),
+                AccountMeta::new(maker_ata_b, false),
+                AccountMeta::new(TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(system_program_id(), false),
+                AccountMeta::new(associated_token_program_id(), false),
+            ],
+            data: vec![DISCRIMINATOR_TAKE],
+        };
+
+        let tx = {
+            let message = Message::new(&[take_ix], Some(&taker.pubkey()));
+            let blockhash = svm.latest_blockhash();
+            Transaction::new(&[&taker], message, blockhash)
+        };
+
+        let metadata = svm.send_transaction(tx).expect("take transaction failed");
+
+        println!("take: ok — {} CUs", metadata.compute_units_consumed);
+    }
+
+    // #[test]
+    // pub fn test_take_ixn() {
+    //     let (mut svm, reusable, tx) = setup_with_make();
+
+    //     let taker = Keypair::new();
+    //     svm.airdrop(&taker.pubkey(), 10 * LAMPORTS_PER_SOL)
+    //         .expect("Failed to airdrop lamports to the taker");
+
+    //     let amount_to_receive: u64 = 100_000_000;
+
+    //     let payer = reusable.payer;
+    //     let maker = reusable.maker;
+    //     let escrow = reusable.escrow;
+    //     let mint_a = reusable.mint_a;
+    //     let mint_b = reusable.mint_a;
+    //     let maker_ata_b = reusable.maker_ata_b;
+
+    //     let taker_ata_a = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_a)
+    //         .owner(&taker.pubkey())
+    //         .send()
+    //         .unwrap();
+
+    //     let taker_ata_b = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_b)
+    //         .owner(&taker.pubkey())
+    //         .send()
+    //         .unwrap();
+
+    //     MintTo::new(&mut svm, &payer, &mint_b, &taker_ata_b, amount_to_receive);
+
+    //     let take_ix = Instruction {
+    //         program_id: crate::ID,
+    //         accounts: vec![
+    //             AccountMeta::new(taker.pubkey(), true),
+    //             AccountMeta::new(maker.pubkey(), false),
+    //             AccountMeta::new(escrow, false),
+    //             AccountMeta::new(mint_a, false),
+    //             AccountMeta::new(mint_b, false),
+    //             AccountMeta::new(taker_ata_a, false),
+    //             AccountMeta::new(taker_ata_b, false),
+    //             AccountMeta::new(escrow_ata_a, false),
+    //             AccountMeta::new(maker_ata_b, false),
+    //             AccountMeta::new(TOKEN_PROGRAM_ID, false),
+    //             AccountMeta::new(system_program, false),
+    //             AccountMeta::new(associated_token_program, false),
+    //         ],
+    //         data: crate::instruction::Take {}.data(),
+    //     };
+    // }
 }

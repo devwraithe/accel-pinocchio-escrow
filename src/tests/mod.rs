@@ -49,6 +49,7 @@ mod tests {
     // ----- Instruction discriminators ----- //
     const DISCRIMINATOR_MAKE: u8 = 0;
     const DISCRIMINATOR_TAKE: u8 = 1;
+    const DISCRIMINATOR_REFUND: u8 = 2;
 
     // ----- Helpers ----- //
     fn setup() -> (LiteSVM, Keypair) {
@@ -166,9 +167,15 @@ mod tests {
     // ----- Tests ----- //
     #[test]
     pub fn test_make() {
-        let (_svm, _accounts, metadata) = make_escrow();
+        let (svm, accounts, metadata) = make_escrow();
 
-        println!("make: ok — {}\nCUs", metadata.compute_units_consumed);
+        let EscrowAccounts { vault, .. } = accounts;
+
+        println!("make: ok — {} CUs", metadata.compute_units_consumed);
+        // println!("make: ok - logs {:#?}", metadata.logs);
+
+        let vault_bal = svm.get_balance(&vault).unwrap_or(0);
+        println!("make: ok - vault balance: {:?}", vault_bal);
 
         // Add assertions to confirm transaction state changes
     }
@@ -239,54 +246,61 @@ mod tests {
         let metadata = svm.send_transaction(tx).expect("take transaction failed");
 
         println!("take: ok — {} CUs", metadata.compute_units_consumed);
+        // println!("take: ok - logs {:#?}", metadata.logs);
+
+        // Check account state changes
+        let vault_balance = svm.get_balance(&vault).unwrap_or(0);
+        println!("take: ok - vault balance: {:?}", vault_balance);
+
+        let taker_balance = svm.get_balance(&taker_ata_a).unwrap_or(0);
+        println!("take: ok - taker balance: {:?}", taker_balance);
     }
 
-    // #[test]
-    // pub fn test_take_ixn() {
-    //     let (mut svm, reusable, tx) = setup_with_make();
+    #[test]
+    fn test_refund() {
+        let (mut svm, accounts, _) = make_escrow();
 
-    //     let taker = Keypair::new();
-    //     svm.airdrop(&taker.pubkey(), 10 * LAMPORTS_PER_SOL)
-    //         .expect("Failed to airdrop lamports to the taker");
+        let EscrowAccounts {
+            payer,
+            maker,
+            vault,
+            escrow,
+            mint_a,
+            maker_ata_a,
+            ..
+        } = accounts;
 
-    //     let amount_to_receive: u64 = 100_000_000;
+        // --- Refund instruction --- //
+        let refund_ix = Instruction {
+            program_id: program_id(),
+            accounts: vec![
+                AccountMeta::new(maker, true),
+                AccountMeta::new(mint_a, false),
+                AccountMeta::new(escrow, false),
+                AccountMeta::new(vault, false),
+                AccountMeta::new(maker_ata_a, false),
+                AccountMeta::new(TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(system_program_id(), false),
+                AccountMeta::new(associated_token_program_id(), false),
+            ],
+            data: vec![DISCRIMINATOR_REFUND],
+        };
 
-    //     let payer = reusable.payer;
-    //     let maker = reusable.maker;
-    //     let escrow = reusable.escrow;
-    //     let mint_a = reusable.mint_a;
-    //     let mint_b = reusable.mint_a;
-    //     let maker_ata_b = reusable.maker_ata_b;
+        let tx = {
+            let message = Message::new(&[refund_ix], Some(&maker));
+            let blockhash = svm.latest_blockhash();
+            Transaction::new(&[&payer], message, blockhash)
+        };
 
-    //     let taker_ata_a = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_a)
-    //         .owner(&taker.pubkey())
-    //         .send()
-    //         .unwrap();
+        let metadata = svm.send_transaction(tx).expect("refund transaction failed");
 
-    //     let taker_ata_b = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_b)
-    //         .owner(&taker.pubkey())
-    //         .send()
-    //         .unwrap();
+        println!("refund: ok - {} CUs", metadata.compute_units_consumed);
+        // println!("refund: ok - logs {:#?}", metadata.logs);
 
-    //     MintTo::new(&mut svm, &payer, &mint_b, &taker_ata_b, amount_to_receive);
+        let vault_balance = svm.get_balance(&vault).unwrap_or(0);
+        println!("refund: ok - vault balance: {:?}", vault_balance);
 
-    //     let take_ix = Instruction {
-    //         program_id: crate::ID,
-    //         accounts: vec![
-    //             AccountMeta::new(taker.pubkey(), true),
-    //             AccountMeta::new(maker.pubkey(), false),
-    //             AccountMeta::new(escrow, false),
-    //             AccountMeta::new(mint_a, false),
-    //             AccountMeta::new(mint_b, false),
-    //             AccountMeta::new(taker_ata_a, false),
-    //             AccountMeta::new(taker_ata_b, false),
-    //             AccountMeta::new(escrow_ata_a, false),
-    //             AccountMeta::new(maker_ata_b, false),
-    //             AccountMeta::new(TOKEN_PROGRAM_ID, false),
-    //             AccountMeta::new(system_program, false),
-    //             AccountMeta::new(associated_token_program, false),
-    //         ],
-    //         data: crate::instruction::Take {}.data(),
-    //     };
-    // }
+        let maker_balance = svm.get_balance(&maker_ata_a).unwrap_or(0);
+        println!("refund: ok - maker balance: {:?}", maker_balance);
+    }
 }

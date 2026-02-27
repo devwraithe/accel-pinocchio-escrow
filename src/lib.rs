@@ -1,7 +1,6 @@
 #![allow(unexpected_cfgs)]
 use pinocchio::{
-    address::declare_id, entrypoint, error::ProgramError, nostd_panic_handler, AccountView,
-    Address, ProgramResult,
+    address::declare_id, entrypoint, error::ProgramError, AccountView, Address, ProgramResult,
 };
 
 use crate::instructions::EscrowInstructions;
@@ -28,6 +27,7 @@ pub fn process_instruction(
     match EscrowInstructions::try_from(discriminator)? {
         EscrowInstructions::Make => instructions::process_make_instruction(accounts, data)?,
         EscrowInstructions::Take => instructions::process_take_instruction(accounts, data)?,
+        EscrowInstructions::Refund => instructions::process_refund_ixn(accounts)?,
         // EscrowInstrctions::MakeV2 => instructions::process_make_instruction_v2(accounts, data)?,
         _ => return Err(ProgramError::InvalidInstructionData),
     }

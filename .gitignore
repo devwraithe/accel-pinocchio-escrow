@@ -1,3 +1,4 @@
 .DS_Store
 /target
 /src/tests/backup.rs
+/test-ledger

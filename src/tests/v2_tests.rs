@@ -49,7 +49,7 @@ mod v2_tests {
 
     // ----- Instruction discriminators ----- //
     const DISCRIMINATOR_MAKE_V2: u8 = 3;
-    const _DISCRIMINATOR_TAKE_V2: u8 = 4;
+    const DISCRIMINATOR_TAKE_V2: u8 = 4;
     const _DISCRIMINATOR_REFUND_V2: u8 = 5;
 
     // ----- Helpers ----- //
@@ -180,5 +180,81 @@ mod v2_tests {
         println!("make: ok - vault balance: {:?}", vault_bal);
 
         // Add assertions to confirm transaction state changes
+    }
+
+    #[test]
+    fn test_take_v2() {
+        let (mut svm, accounts, _) = make_escrow();
+
+        let EscrowAccounts {
+            payer,
+            maker,
+            vault,
+            escrow,
+            mint_a,
+            mint_b,
+            maker_ata_b,
+            ..
+        } = accounts;
+
+        let amount_to_receive: u64 = 100_000_000;
+
+        // --- Taker setup --- //
+        let taker = Keypair::new();
+        svm.airdrop(&taker.pubkey(), 10 * LAMPORTS_PER_SOL)
+            .expect("airdrop to taker failed");
+
+        let taker_ata_a = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_a)
+            .owner(&taker.pubkey())
+            .send()
+            .expect("failed to create taker_ata_a");
+
+        let taker_ata_b = CreateAssociatedTokenAccount::new(&mut svm, &taker, &mint_b)
+            .owner(&taker.pubkey())
+            .send()
+            .expect("failed to create taker_ata_b");
+
+        // Fund the taker's mint_b account so they can fulfill the maker's ask.
+        MintTo::new(&mut svm, &payer, &mint_b, &taker_ata_b, amount_to_receive)
+            .send()
+            .expect("failed to mint tokens to taker_ata_b");
+
+        // --- Take instruction --- //
+        let take_ix = Instruction {
+            program_id: program_id(),
+            accounts: vec![
+                AccountMeta::new(taker.pubkey(), true),
+                AccountMeta::new(maker, false),
+                AccountMeta::new(mint_a, false),
+                AccountMeta::new(mint_b, false),
+                AccountMeta::new(escrow, false),
+                AccountMeta::new(vault, false),
+                AccountMeta::new(taker_ata_a, false),
+                AccountMeta::new(taker_ata_b, false),
+                AccountMeta::new(maker_ata_b, false),
+                AccountMeta::new(TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(system_program_id(), false),
+                AccountMeta::new(associated_token_program_id(), false),
+            ],
+            data: vec![DISCRIMINATOR_TAKE_V2],
+        };
+
+        let tx = {
+            let message = Message::new(&[take_ix], Some(&taker.pubkey()));
+            let blockhash = svm.latest_blockhash();
+            Transaction::new(&[&taker], message, blockhash)
+        };
+
+        let metadata = svm.send_transaction(tx).expect("take transaction failed");
+
+        println!("take: ok — {} CUs", metadata.compute_units_consumed);
+        // println!("take: ok - logs {:#?}", metadata.logs);
+
+        // Check account state changes
+        let vault_balance = svm.get_balance(&vault).unwrap_or(0);
+        println!("take: ok - vault balance: {:?}", vault_balance);
+
+        let taker_balance = svm.get_balance(&taker_ata_a).unwrap_or(0);
+        println!("take: ok - taker balance: {:?}", taker_balance);
     }
 }

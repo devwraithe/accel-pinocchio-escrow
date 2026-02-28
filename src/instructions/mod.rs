@@ -8,6 +8,7 @@ pub use refund::*;
 pub use take::*;
 
 pub use wincode::make_v2::*;
+pub use wincode::take_v2::*;
 
 use pinocchio::error::ProgramError;
 
@@ -16,6 +17,7 @@ pub enum EscrowInstructions {
     Take = 1,
     Refund = 2, // or Cancel
     MakeV2 = 3,
+    TakeV2 = 4,
 }
 
 impl TryFrom<&u8> for EscrowInstructions {
@@ -27,6 +29,7 @@ impl TryFrom<&u8> for EscrowInstructions {
             1 => Ok(EscrowInstructions::Take),
             2 => Ok(EscrowInstructions::Refund),
             3 => Ok(EscrowInstructions::MakeV2),
+            4 => Ok(EscrowInstructions::TakeV2),
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }

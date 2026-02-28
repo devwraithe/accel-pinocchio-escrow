@@ -6,7 +6,7 @@ use pinocchio::{
 
 use crate::state::EscrowV2;
 
-pub fn process_take_ixn_v2(accounts: &[AccountView]) -> ProgramResult {
+pub fn process_take_v2_ixn(accounts: &[AccountView]) -> ProgramResult {
     let [taker, maker, mint_a, mint_b, escrow_account, vault, taker_ata_a, taker_ata_b, maker_ata_b, _token_program, _system_program, _associated_token_program @ ..] =
         accounts
     else {

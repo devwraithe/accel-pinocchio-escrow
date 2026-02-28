@@ -50,7 +50,7 @@ mod v2_tests {
     // ----- Instruction discriminators ----- //
     const DISCRIMINATOR_MAKE_V2: u8 = 3;
     const DISCRIMINATOR_TAKE_V2: u8 = 4;
-    const _DISCRIMINATOR_REFUND_V2: u8 = 5;
+    const DISCRIMINATOR_REFUND_V2: u8 = 5;
 
     // ----- Helpers ----- //
     fn setup() -> (LiteSVM, Keypair) {
@@ -256,5 +256,53 @@ mod v2_tests {
 
         let taker_balance = svm.get_balance(&taker_ata_a).unwrap_or(0);
         println!("take: ok - taker balance: {:?}", taker_balance);
+    }
+
+    #[test]
+    fn test_refund_v2() {
+        let (mut svm, accounts, _) = make_escrow();
+
+        let EscrowAccounts {
+            payer,
+            maker,
+            vault,
+            escrow,
+            mint_a,
+            maker_ata_a,
+            ..
+        } = accounts;
+
+        // --- Refund instruction --- //
+        let refund_ix = Instruction {
+            program_id: program_id(),
+            accounts: vec![
+                AccountMeta::new(maker, true),
+                AccountMeta::new(mint_a, false),
+                AccountMeta::new(escrow, false),
+                AccountMeta::new(vault, false),
+                AccountMeta::new(maker_ata_a, false),
+                AccountMeta::new(TOKEN_PROGRAM_ID, false),
+                AccountMeta::new(system_program_id(), false),
+                AccountMeta::new(associated_token_program_id(), false),
+            ],
+            data: vec![DISCRIMINATOR_REFUND_V2],
+        };
+
+        let tx = {
+            let message = Message::new(&[refund_ix], Some(&maker));
+            let blockhash = svm.latest_blockhash();
+            Transaction::new(&[&payer], message, blockhash)
+        };
+
+        let metadata = svm.send_transaction(tx).expect("refund transaction failed");
+
+        println!("refund: ok - {} CUs", metadata.compute_units_consumed);
+        // println!("refund: ok - logs {:#?}", metadata.logs);
+
+        let vault_balance = svm.get_balance(&vault).unwrap_or(0);
+        println!("refund: ok - vault balance: {:?}", vault_balance);
+
+        let maker_balance = svm.get_balance(&maker_ata_a).unwrap_or(0);
+        println!("refund: ok - maker balance: {:?}", maker_balance);
     }
 }

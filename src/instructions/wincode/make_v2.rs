@@ -10,7 +10,7 @@ use pinocchio_system::instructions::CreateAccount;
 
 use crate::state::{EscrowV2, MakeArgs};
 
-pub fn process_make_ixn_v2(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
+pub fn process_make_v2_ixn(accounts: &[AccountView], data: &[u8]) -> ProgramResult {
     // Destructure `accounts` &[AccountView] slice
     let [maker, mint_a, mint_b, escrow_account, maker_ata, vault, system_program, token_program, _associated_token_program @ ..] =
         accounts

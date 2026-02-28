@@ -28,8 +28,9 @@ pub fn process_instruction(
         EscrowInstructions::Make => instructions::process_make_instruction(accounts, data)?,
         EscrowInstructions::Take => instructions::process_take_instruction(accounts)?,
         EscrowInstructions::Refund => instructions::process_refund_ixn(accounts)?,
-        EscrowInstructions::MakeV2 => instructions::process_make_ixn_v2(accounts, data)?,
-        EscrowInstructions::TakeV2 => instructions::process_take_ixn_v2(accounts)?,
+        EscrowInstructions::MakeV2 => instructions::process_make_v2_ixn(accounts, data)?,
+        EscrowInstructions::TakeV2 => instructions::process_take_v2_ixn(accounts)?,
+        EscrowInstructions::RefundV2 => instructions::process_refund_v2_ixn(accounts)?,
         _ => return Err(ProgramError::InvalidInstructionData),
     }
     Ok(())
